@@ -487,12 +487,13 @@ class DailyJournal {
 
     for (const file of files) {
       if (!file.type.startsWith('image/')) {
-        this.showToast('Please select only image files', 'error');
+        this.showToast('Please select only image files (JPEG, PNG, GIF, etc.)', 'error');
         continue;
       }
 
-      if (file.size > 5 * 1024 * 1024) { // 5MB limit
-        this.showToast('Image size must be less than 5MB', 'error');
+      const maxSize = 10 * 1024 * 1024; // 10MB limit (matches server limit)
+      if (file.size > maxSize) {
+        this.showToast(`Image size must be less than ${maxSize / (1024 * 1024)}MB`, 'error');
         continue;
       }
 
@@ -507,22 +508,30 @@ class DailyJournal {
           body: formData
         });
 
-        if (response.ok) {
-          const result = await response.json();
-          this.currentPhotos.push(result.path);
-          this.renderPhotoPreview();
-        } else {
-          throw new Error('Upload failed');
+        const result = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(result.error || 'Upload failed');
         }
+
+        // Store the full URL to the uploaded file
+        const photoUrl = result.path.startsWith('http') ? result.path : 
+                        (result.path.startsWith('/') ? result.path : `/${result.path}`);
+        
+        this.currentPhotos.push(photoUrl);
+        this.renderPhotoPreview();
+        this.showToast('Photo uploaded successfully!', 'success');
+        
       } catch (error) {
         console.error('Error uploading photo:', error);
-        this.showToast('Error uploading photo', 'error');
+        const errorMessage = error.message || 'Error uploading photo. Please try again.';
+        this.showToast(errorMessage, 'error');
+      } finally {
+        this.showLoading(false);
+        // Clear the input so the same file can be selected again
+        document.getElementById('photoInput').value = '';
       }
     }
-    
-    this.showLoading(false);
-    // Clear the input so the same file can be selected again
-    document.getElementById('photoInput').value = '';
   }
 
   renderPhotoPreview() {

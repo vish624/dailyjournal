@@ -14,15 +14,33 @@ app.use(express.static('public'));
 app.use('/uploads', express.static('uploads'));
 
 // Configure multer for file uploads
+const os = require('os');
+const path = require('path');
+
+// Use /tmp directory in production (Vercel) or 'uploads' in development
+const uploadDir = process.env.VERCEL ? os.tmpdir() : path.join(__dirname, 'uploads');
+
+// Ensure the upload directory exists
+if (!process.env.VERCEL) {
+  const fs = require('fs');
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/');
+    cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
     cb(null, Date.now() + '-' + file.originalname);
   }
 });
-const upload = multer({ storage: storage });
+
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
 
 // Initialize SQLite database
 const db = new sqlite3.Database('journal.db');
@@ -189,9 +207,25 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   });
 });
 
-// Serve the main HTML file
+// Serve the landing page as homepage
 app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'landing.html'));
+});
+
+// Serve the journal app
+app.get('/app', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Handle 404
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not Found' });
+});
+
+// Error handling
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ error: 'Something went wrong!' });
 });
 
 // Start server
