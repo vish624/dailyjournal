@@ -1,0 +1,23 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# Env and OS
+.env
+.DS_Store
+Thumbs.db
+
+# App data
+journal.json
+
+# Logs
+logs
+*.log
+
+# Misc
+coverage/
+dist/
+build/
