@@ -342,8 +342,14 @@ themeSelect.addEventListener('change', () => {
 // Export
 exportBtn.addEventListener('click', async () => {
   try {
-    const res = await fetch('/api/export');
-    const data = await res.json();
+    let data;
+    if (backendAvailable) {
+      const res = await fetch('/api/export');
+      data = await res.json();
+    } else {
+      // offline export from localStorage
+      data = { entries: lsLoad() };
+    }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -360,8 +366,31 @@ importFile.addEventListener('change', async () => {
   try {
     const text = await file.text();
     const json = JSON.parse(text);
-    const res = await apiPost('/import', json);
-    alert(`Imported ${res.count} entries`);
+    if (backendAvailable) {
+      const res = await apiPost('/import', json);
+      alert(`Imported ${res.count} entries`);
+    } else {
+      // merge into localStorage
+      const inArr = Array.isArray(json.entries) ? json.entries : [];
+      let count = 0;
+      for (const e of inArr) {
+        const id = e.id || (Date.now().toString(36) + Math.random().toString(36).slice(2));
+        const item = {
+          id,
+          date: e.date,
+          title: e.title || '',
+          content: e.content || '',
+          mood: e.mood ?? null,
+          tags: Array.isArray(e.tags) ? e.tags : [],
+          createdAt: e.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        // replace any existing with same id
+        lsUpsert(item);
+        count++;
+      }
+      alert(`Imported ${count} entries`);
+    }
     await renderCalendar();
   } catch (e) { alert('Import failed'); console.error(e); }
   importFile.value = '';
