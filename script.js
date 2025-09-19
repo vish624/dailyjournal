@@ -32,11 +32,44 @@ const exportBtn = document.getElementById('exportBtn');
 const importBtn = document.getElementById('importBtn');
 const importFile = document.getElementById('importFile');
 
+// Backend status indicator (optional element)
+const backendStatusEl = document.getElementById('backendStatus');
+
 let current = new Date();
 current.setDate(1);
 let selectedDateISO = null; // YYYY-MM-DD
 let selectedEntryId = null; // for updates
 let monthEntriesMap = new Map(); // dateISO -> { id, mood }
+let backendAvailable = true;
+
+// LocalStorage fallback
+const LS_KEY = 'dj_entries_v1';
+function lsLoad() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY) || '[]'); } catch { return []; }
+}
+function lsSave(arr) { try { localStorage.setItem(LS_KEY, JSON.stringify(arr)); } catch {} }
+function lsGetByDate(dateISO) {
+  const arr = lsLoad();
+  return arr.find(e => e.date === dateISO) || null;
+}
+function lsUpsert(entry) {
+  const arr = lsLoad();
+  const idx = arr.findIndex(e => e.id === entry.id);
+  if (idx === -1) arr.push(entry); else arr[idx] = entry;
+  lsSave(arr);
+}
+function lsDelete(id) {
+  const arr = lsLoad().filter(e => e.id !== id);
+  lsSave(arr);
+}
+function lsByMonth(year, month) {
+  const m = String(month).padStart(2, '0');
+  return lsLoad().filter(e => e.date.startsWith(`${year}-${m}-`));
+}
+function lsSearch(q) {
+  const lower = q.toLowerCase();
+  return lsLoad().filter(e => (e.title||'').toLowerCase().includes(lower) || (e.content||'').toLowerCase().includes(lower));
+}
 
 // Utilities
 function formatMonthYear(d) {
@@ -79,9 +112,22 @@ async function apiDelete(path) {
 async function loadMonthDots() {
   const year = current.getFullYear();
   const month = current.getMonth() + 1;
-  const rows = await apiGet(`/entries/by-month?year=${year}&month=${month}`);
-  monthEntriesMap.clear();
-  rows.forEach(r => monthEntriesMap.set(r.date, r));
+  try {
+    const rows = await apiGet(`/entries/by-month?year=${year}&month=${month}`);
+    monthEntriesMap.clear();
+    rows.forEach(r => monthEntriesMap.set(r.date, r));
+    backendAvailable = true;
+  } catch (e) {
+    // Backend not reachable (e.g., static hosting). Proceed without dots.
+    const rows = lsByMonth(year, month).map(e => ({ id: e.id, date: e.date, mood: e.mood ?? null }));
+    monthEntriesMap.clear();
+    rows.forEach(r => monthEntriesMap.set(r.date, r));
+    backendAvailable = false;
+  }
+  if (backendStatusEl) {
+    backendStatusEl.textContent = backendAvailable ? 'Connected' : 'Offline';
+    backendStatusEl.className = backendAvailable ? 'status-chip ok' : 'status-chip warn';
+  }
 }
 
 function clearSelection() {
@@ -115,19 +161,19 @@ async function openDate(dateISO) {
   deleteBtn.style.display = 'none';
 
   try {
-    const data = await apiGet(`/entries?date=${dateISO}`);
-    selectedEntryId = data.id;
-    entryTitle.value = data.title || '';
-    entryText.value = data.content || '';
-    tagsInput.value = Array.isArray(data.tags) ? data.tags.join(', ') : '';
-    if (data.mood) {
-      const btn = moodButtons.find(b => Number(b.dataset.mood) === Number(data.mood));
-      if (btn) btn.classList.add('active');
+    const data = backendAvailable ? await apiGet(`/entries?date=${dateISO}`) : lsGetByDate(dateISO);
+    if (data) {
+      selectedEntryId = data.id;
+      entryTitle.value = data.title || '';
+      entryText.value = data.content || '';
+      tagsInput.value = Array.isArray(data.tags) ? data.tags.join(', ') : '';
+      if (data.mood) {
+        const btn = moodButtons.find(b => Number(b.dataset.mood) === Number(data.mood));
+        if (btn) btn.classList.add('active');
+      }
+      deleteBtn.style.display = 'inline-flex';
     }
-    deleteBtn.style.display = 'inline-flex';
-  } catch (e) {
-    // Not found -> new entry state
-  }
+  } catch (e) { /* new entry state */ }
 }
 
 async function renderCalendar() {
@@ -199,11 +245,23 @@ saveBtn.addEventListener('click', async () => {
   const payload = { date: selectedDateISO, title: entryTitle.value.trim(), content: entryText.value.trim(), mood, tags };
 
   try {
-    if (selectedEntryId) {
-      await apiPut(`/entries/${selectedEntryId}`, payload);
+    if (backendAvailable) {
+      if (selectedEntryId) {
+        await apiPut(`/entries/${selectedEntryId}`, payload);
+      } else {
+        const res = await apiPost('/entries', payload);
+        selectedEntryId = res.id;
+      }
     } else {
-      const res = await apiPost('/entries', payload);
-      selectedEntryId = res.id;
+      // local save
+      const id = selectedEntryId || (Date.now().toString(36) + Math.random().toString(36).slice(2));
+      const now = new Date().toISOString();
+      const entry = { id, ...payload, createdAt: now, updatedAt: now };
+      // ensure only one entry per date by replacing existing
+      const existing = lsGetByDate(selectedDateISO);
+      if (existing) lsDelete(existing.id);
+      lsUpsert(entry);
+      selectedEntryId = id;
     }
     await renderCalendar();
   } catch (e) {
@@ -217,7 +275,8 @@ deleteBtn.addEventListener('click', async () => {
   if (!selectedEntryId) return;
   if (!confirm('Delete this entry?')) return;
   try {
-    await apiDelete(`/entries/${selectedEntryId}`);
+    if (backendAvailable) await apiDelete(`/entries/${selectedEntryId}`);
+    else lsDelete(selectedEntryId);
     clearSelection();
     await renderCalendar();
   } catch (e) {
@@ -240,7 +299,7 @@ searchInput.addEventListener('input', async () => {
   const q = searchInput.value.trim();
   if (!q) { searchResults.innerHTML = ''; return; }
   try {
-    const rows = await apiGet(`/entries/search?q=${encodeURIComponent(q)}`);
+    const rows = backendAvailable ? await apiGet(`/entries/search?q=${encodeURIComponent(q)}`) : lsSearch(q).map(e => ({ id: e.id, date: e.date, title: e.title, snippet: (e.content||'').slice(0,200), mood: e.mood||null }));
     searchResults.innerHTML = '';
     for (const r of rows) {
       const item = document.createElement('div');
