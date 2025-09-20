@@ -44,7 +44,7 @@ No native build tools are required (uses LowDB, not native SQLite).
 If the browser shows "refused to connect", ensure the server started successfully (see terminal output), and that you are using http (not https).
 
 ## Usage
-- Navigate months using the left/right arrows.
+- Navigate months using the left/right arrow buttons.
 - Click any day to open the editor, then write your entry.
 - Pick a mood and optionally add comma-separated tags.
 - Click Save. A dot appears on that day (color reflects the chosen mood).
